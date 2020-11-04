@@ -1,4 +1,3 @@
-
 PORTB = $6000
 PORTA = $6001
 DDIRB = $6002
@@ -22,8 +21,12 @@ RS = %00100000
 value = $0200 ; 2 bytes
 mod10 = $0202 ; 2 bytes
 
-buffer = $0204 ; 80 bytes
-; next = $0254
+buffer	= $0206 	; 81 bytes
+offset	= $0257 	; 1 byte. offset of character
+rate 	= $0258		; 1 bytes. used for mod operation
+frame	= $0259		; 1 byte. used as frame counter
+numcycles = $025a	; 1 byte. used to count number of cycles through frames
+e_offset = $025b	; 1 byte. offset of enemy
 
 	.org $8000
 
@@ -55,13 +58,33 @@ lcd_init:
 	jsr lcd_instruction
 	lda #SET_SHIFT_MODE
 	jsr lcd_instruction
+game_init:
+	lda #0
+	sta frame
+	sta numcycles
+	lda #8
+	sta e_offset
+	lda #128
+	sta rate ; frame rate
+	lda #0
+	sta offset
+	ldx offset
+	lda #"."
+	sta buffer,x
+	lda #"&"
+	sta buffer + 8
 
 main_loop:
-	lda #%00000010
-	jsr lcd_instruction
-
-	; jsr print_buffer
+	lda frame
+	jsr mod
+	bne skip_frame
+	jsr print_buffer
+skip_frame:
+	inc frame
+	bne main_loop
+	inc numcycles
 	jmp main_loop
+
 
 load_buffer:
 	ldx #0
@@ -74,7 +97,30 @@ load_buffer_loop:
 return_from_load_buffer
 	rts
 
+
+mod: 			; 1-byte modulo operation
+	sta value
+	ldx #8
+	lda #0
+	sta mod10
+subloop:
+	rol value
+	rol mod10
+	lda mod10
+	sec
+	sbc rate
+	bcc ignore
+	sta mod10
+ignore:
+	dex
+	bne subloop
+	lda mod10
+	rts
+
+
 print_buffer:
+	lda #%00000010
+	jsr lcd_instruction
 	ldx #0
 print_loop:
 	lda buffer,x
@@ -84,6 +130,7 @@ print_loop:
 	jmp print_loop
 end_print:
 	rts
+
 
 lcd_instruction:
 	pha
@@ -102,6 +149,7 @@ lcd_instruction:
 	pla
 	rts
 
+
 lcd_print:
 	pha
 	jsr lcd_wait
@@ -118,6 +166,7 @@ lcd_print:
 
 	pla
 	rts
+
 
 lcd_wait:
 	pha
@@ -142,59 +191,55 @@ wait:
 	pla
 	rts
 
-push_char:
-	pha ; Push new first char onto stack
-	ldy #0
-
-char_loop:
-	lda buffer,y ; Get char on string and put into X register
-	tax
-	pla
-	sta buffer,y ; Pull char off stack and add to string
-	iny
-	txa
-	pha ; Push char from string onto the stack
-	bne char_loop
-
-	pla
-	sta buffer,y ; Pull off null terminator and put at end of string
-
-	rts
 
 nmi:
-irqb:
+irq:
 	pha
 	txa
 	pha
 	tya
 	pha
-
-	ldx #0
-shoot_loop:
-	lda buffer,x
-	beq go_home
-	lda #"0"
-	sta buffer,x
-	jsr print_buffer
+handler:
+	ldx offset
 	lda #" "
 	sta buffer,x
-	inx
-	txa
-	pha
-	ldy #$ff
-	ldx #$ff
-short_wait:
-	dex
-	bne short_wait
-	dey
-	bne short_wait
-	pla
-	tax
-	jmp shoot_loop
-
-go_home:
-	bit PORTA
-
+	lda PORTA
+	tay 			; temporarily put result in A reg
+	and #%00000001 	; left button
+	bne check_again ; handle left button
+	dec offset
+	lda offset
+	cmp #$ff		; jump to end of second line if underflow
+	bne check_for_39
+	lda #55
+	sta offset
+	jmp irq_return
+check_for_39:
+	cmp #39
+	bne irq_return
+	lda #15
+	sta offset
+	jmp irq_return
+check_again:
+	tya				; get original result back
+	and #%00000010	; right button
+	bne irq_return ; handle right button
+	inc offset
+	lda offset
+	cmp #16
+	bne check_for_56
+	lda #40
+	sta offset
+	jmp irq_return
+check_for_56
+	cmp #56
+	bne irq_return
+	lda #0
+	sta offset
+irq_return:
+	ldx offset
+	lda #"."
+	sta buffer,x
 	pla
 	tay
 	pla
@@ -202,11 +247,12 @@ go_home:
 	pla
 	rti
 
+
 	number: .word 1729
 
-	blank_buffer: .asciiz "                                                                               " 
+	blank_buffer: .asciiz "                                                                               "
 
 	.org $fffa
 	.word nmi
 	.word reset
-	.word irqb
+	.word irq
