@@ -21,12 +21,14 @@ RS = %00100000
 value = $0200 ; 2 bytes
 mod10 = $0202 ; 2 bytes
 
-buffer	= $0206 	; 81 bytes
-offset	= $0257 	; 1 byte. offset of character
-rate 	= $0258		; 1 bytes. used for mod operation
-frame	= $0259		; 1 byte. used as frame counter
-numcycles = $025a	; 1 byte. used to count number of cycles through frames
-e_offset = $025b	; 1 byte. offset of enemy
+buffer		= $0206 	; 81 bytes
+offset		= $0257 	; 1 byte. offset of character
+rate 		= $0258		; 1 bytes. used for mod operation
+frame		= $0259		; 1 byte. used as frame counter
+numcycles	= $025a	; 1 byte. used to count number of cycles through frames
+e_offset	= $025b	; 1 byte. offset of enemy
+
+b_flag		= $025c ; 1 byte. boolean flag
 
 	.org $8000
 
@@ -75,6 +77,8 @@ game_init:
 	sta buffer + 8
 
 main_loop:
+	lda #128
+	sta rate
 	lda frame
 	jsr mod
 	bne skip_frame
@@ -83,7 +87,58 @@ skip_frame:
 	inc frame
 	bne main_loop
 	inc numcycles
+	jsr move_enemy
+no_move:
 	jmp main_loop
+
+	game_over_text: .asciiz "game over"
+
+game_over:
+	ldx #0
+game_over_text_loop:
+	lda game_over_text,x
+	beq game_over_print
+	sta buffer,x
+	inx
+	jmp game_over_text_loop
+game_over_print:
+	jsr print_buffer
+game_over_empty_loop:
+	jmp game_over_empty_loop
+
+
+move_enemy:
+	lda e_offset
+	cmp offset
+	beq game_over
+	lda numcycles
+	cmp #7
+	bne move_enemy_cleanup
+	ldx e_offset
+	lda #" "
+	sta buffer,x
+	dex
+	lda #"&"
+	sta buffer,x
+	lda #0
+	sta numcycles
+	txa
+	sta e_offset
+	cmp #$ff
+	beq under
+	cmp #39
+	beq first_line
+move_enemy_return:
+move_enemy_cleanup:
+	rts
+under:
+	lda #55
+	sta e_offset
+	jmp move_enemy_return
+first_line:
+	lda #15
+	sta e_offset
+	jmp move_enemy_return
 
 
 load_buffer:
